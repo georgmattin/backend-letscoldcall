@@ -1,0 +1,44 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sticky Button Test</title>
+    <link rel="stylesheet" href="components/sticky-call-button.css">
+</head>
+<body>
+    <h1>Sticky Button Test</h1>
+    <p>Kui kõik töötab, peaks paremal all ilmuma roheline "Helista" nupp.</p>
+    
+    <script src="components/sticky-call-button.js"></script>
+    <script>
+        console.log('Testing sticky button...');
+        console.log('StickyCallButton class:', typeof StickyCallButton);
+        
+        document.addEventListener('DOMContentLoaded', function() {
+            console.log('DOM loaded, creating sticky button...');
+            
+            try {
+                const stickyBtn = new StickyCallButton({
+                    text: 'Helista',
+                    onClick: (event, instance) => {
+                        alert('Sticky button töötab!');
+                        console.log('Button clicked!');
+                    }
+                });
+                
+                console.log('Sticky button created:', stickyBtn);
+                console.log('Button element:', stickyBtn.element);
+                
+                setTimeout(() => {
+                    console.log('Button in DOM:', document.getElementById('stickyCallBtn'));
+                    console.log('Button visible:', !stickyBtn.isHidden);
+                }, 1000);
+                
+            } catch (error) {
+                console.error('Error creating sticky button:', error);
+            }
+        });
+    </script>
+</body>
+</html> 

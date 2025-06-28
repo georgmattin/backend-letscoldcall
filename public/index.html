@@ -1,0 +1,513 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Let's Cold Call - Dialer</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+
+        .dialer-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            max-width: 400px;
+            width: 100%;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+
+        .header p {
+            color: #666;
+            margin: 0;
+        }
+
+        .recording-notice {
+            background: #fff3cd;
+            color: #856404;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-top: 10px;
+            border: 1px solid #ffeaa7;
+        }
+
+        .phone-display {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 24px;
+            text-align: center;
+            margin-bottom: 20px;
+            min-height: 60px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Courier New', monospace;
+            color: #333;
+        }
+
+        .keypad {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 15px;
+            margin-bottom: 20px;
+        }
+
+        .key {
+            background: #f8f9fa;
+            border: 2px solid #e9ecef;
+            border-radius: 10px;
+            padding: 15px;
+            font-size: 20px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 60px;
+        }
+
+        .key:hover {
+            background: #e9ecef;
+            transform: translateY(-2px);
+        }
+
+        .key:active {
+            transform: translateY(0);
+            background: #dee2e6;
+        }
+
+        .key .letters {
+            font-size: 10px;
+            color: #666;
+            margin-top: 2px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+        }
+
+        .btn {
+            flex: 1;
+            padding: 15px;
+            border: none;
+            border-radius: 10px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn-call {
+            background: #28a745;
+            color: white;
+        }
+
+        .btn-call:hover {
+            background: #218838;
+            transform: translateY(-2px);
+        }
+
+        .btn-call:disabled {
+            background: #6c757d;
+            cursor: not-allowed;
+            transform: none;
+        }
+
+        .btn-clear {
+            background: #dc3545;
+            color: white;
+        }
+
+        .btn-clear:hover {
+            background: #c82333;
+            transform: translateY(-2px);
+        }
+
+        .status {
+            text-align: center;
+            padding: 15px;
+            border-radius: 10px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .call-log {
+            margin-top: 20px;
+            padding: 15px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .call-log h3 {
+            margin-bottom: 10px;
+            color: #333;
+            font-size: 16px;
+        }
+
+        .call-entry {
+            padding: 8px;
+            margin-bottom: 5px;
+            background: white;
+            border-radius: 5px;
+            font-size: 12px;
+            border-left: 4px solid #007bff;
+        }
+
+        .call-entry.success {
+            border-left-color: #28a745;
+        }
+
+        .call-entry.error {
+            border-left-color: #dc3545;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            margin-top: 10px;
+        }
+
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #007bff;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 10px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="dialer-container">
+        <div class="header">
+            <h1>📞 Let's Cold Call</h1>
+            <p>Twilio Dialer</p>
+            <div class="recording-notice">
+                🎙️ Kõik kõned salvestatakse kvaliteedi tagamiseks
+            </div>
+        </div>
+
+        <div class="phone-display" id="phoneDisplay">
+            Sisesta number...
+        </div>
+        
+        <div style="text-align: center; margin-bottom: 15px; font-size: 12px; color: #666;">
+            💡 Nõuanded: Vajuta <strong>*</strong> tühjal väljal → +372 | Vajuta <strong>0</strong> tühjal väljal → +
+        </div>
+
+        <div class="keypad">
+            <div class="key" onclick="addDigit('1')">
+                <span>1</span>
+            </div>
+            <div class="key" onclick="addDigit('2')">
+                <span>2</span>
+                <span class="letters">ABC</span>
+            </div>
+            <div class="key" onclick="addDigit('3')">
+                <span>3</span>
+                <span class="letters">DEF</span>
+            </div>
+            <div class="key" onclick="addDigit('4')">
+                <span>4</span>
+                <span class="letters">GHI</span>
+            </div>
+            <div class="key" onclick="addDigit('5')">
+                <span>5</span>
+                <span class="letters">JKL</span>
+            </div>
+            <div class="key" onclick="addDigit('6')">
+                <span>6</span>
+                <span class="letters">MNO</span>
+            </div>
+            <div class="key" onclick="addDigit('7')">
+                <span>7</span>
+                <span class="letters">PQRS</span>
+            </div>
+            <div class="key" onclick="addDigit('8')">
+                <span>8</span>
+                <span class="letters">TUV</span>
+            </div>
+            <div class="key" onclick="addDigit('9')">
+                <span>9</span>
+                <span class="letters">WXYZ</span>
+            </div>
+            <div class="key" onclick="addDigit('*')" title="Vajuta tühjal väljal +372 jaoks">
+                <span>*</span>
+                <span class="letters">+372</span>
+            </div>
+            <div class="key" onclick="addDigit('0')">
+                <span>0</span>
+                <span class="letters">+</span>
+            </div>
+            <div class="key" onclick="addDigit('#')">
+                <span>#</span>
+            </div>
+        </div>
+
+        <div class="quick-numbers" style="margin-bottom: 15px;">
+            <button class="btn" style="background: #17a2b8; color: white; margin: 2px; padding: 8px 12px; font-size: 12px;" onclick="setNumber('+37256272798')">
+                📱 Sinu number
+            </button>
+            <button class="btn" style="background: #6c757d; color: white; margin: 2px; padding: 8px 12px; font-size: 12px;" onclick="setNumber('+372')">
+                🇪🇪 +372
+            </button>
+        </div>
+
+        <div class="controls">
+            <button class="btn btn-call" id="callBtn" onclick="makeCall()">
+                📞 Helista
+            </button>
+            <button class="btn btn-clear" onclick="clearNumber()">
+                🗑️ Kustuta
+            </button>
+        </div>
+
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Helistamine...</p>
+        </div>
+
+        <div class="status" id="status"></div>
+
+        <div class="call-log">
+            <h3>📋 Kõnede ajalugu</h3>
+            <div id="callHistory"></div>
+        </div>
+    </div>
+
+    <script>
+        let currentNumber = '';
+        let callHistory = JSON.parse(localStorage.getItem('callHistory') || '[]');
+
+        // Display call history on load
+        displayCallHistory();
+
+        function addDigit(digit) {
+            if (digit === '0' && currentNumber === '') {
+                currentNumber = '+';
+            } else if (digit === '*' && currentNumber === '') {
+                // Quick shortcut for Estonia (+372)
+                currentNumber = '+372';
+            } else {
+                currentNumber += digit;
+            }
+            updateDisplay();
+        }
+
+        function updateDisplay() {
+            const display = document.getElementById('phoneDisplay');
+            if (currentNumber === '') {
+                display.textContent = 'Sisesta number...';
+                display.style.color = '#999';
+            } else {
+                display.textContent = currentNumber;
+                display.style.color = '#333';
+            }
+            
+            // Enable/disable call button
+            const callBtn = document.getElementById('callBtn');
+            callBtn.disabled = currentNumber.length < 3;
+        }
+
+        function clearNumber() {
+            if (currentNumber.length > 0) {
+                currentNumber = currentNumber.slice(0, -1);
+                updateDisplay();
+            }
+        }
+
+        function setNumber(number) {
+            currentNumber = number;
+            updateDisplay();
+        }
+
+        function showStatus(message, type) {
+            const status = document.getElementById('status');
+            status.textContent = message;
+            status.className = `status ${type}`;
+            status.style.display = 'block';
+            
+            setTimeout(() => {
+                status.style.display = 'none';
+            }, 5000);
+        }
+
+        function showLoading(show) {
+            document.getElementById('loading').style.display = show ? 'block' : 'none';
+            document.getElementById('callBtn').disabled = show;
+        }
+
+        async function makeCall() {
+            if (currentNumber.length < 3) {
+                showStatus('Palun sisesta kehtiv telefoninumber!', 'error');
+                return;
+            }
+
+            // Validate Estonian number format
+            if (!currentNumber.startsWith('+')) {
+                showStatus('⚠️ Number peab algama + märgiga (nt +37256272798)', 'error');
+                return;
+            }
+
+            // Check if it's your verified number
+            if (currentNumber === '+37256272798') {
+                showStatus('ℹ️ Helistad oma kinnitatud numbrile...', 'info');
+            } else if (currentNumber.startsWith('+372')) {
+                showStatus('⚠️ Ainult +37256272798 on kinnitatud Trial kontol!', 'error');
+                return;
+            } else {
+                showStatus('⚠️ Trial konto: ainult kinnitatud numbrid (+37256272798)', 'error');
+                return;
+            }
+
+            showLoading(true);
+            showStatus('Alustame kõnet...', 'info');
+
+            try {
+                const response = await fetch('/api/make-call', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({
+                        to: currentNumber,
+                        message: 'Tere! See on test kõne Let\'s Cold Call rakendusest.'
+                    })
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showStatus(`✅ Kõne alustatud! SID: ${result.callSid}`, 'success');
+                    
+                    // Add to call history
+                    const callEntry = {
+                        number: currentNumber,
+                        time: new Date().toLocaleString('et-EE'),
+                        status: 'success',
+                        callSid: result.callSid
+                    };
+                    callHistory.unshift(callEntry);
+                    localStorage.setItem('callHistory', JSON.stringify(callHistory.slice(0, 10))); // Keep last 10
+                    displayCallHistory();
+                    
+                    // Clear number after successful call
+                    currentNumber = '';
+                    updateDisplay();
+                } else {
+                    throw new Error(result.error || 'Kõne ebaõnnestus');
+                }
+            } catch (error) {
+                console.error('Call error:', error);
+                showStatus(`❌ Viga: ${error.message}`, 'error');
+                
+                // Add failed call to history
+                const callEntry = {
+                    number: currentNumber,
+                    time: new Date().toLocaleString('et-EE'),
+                    status: 'error',
+                    error: error.message
+                };
+                callHistory.unshift(callEntry);
+                localStorage.setItem('callHistory', JSON.stringify(callHistory.slice(0, 10)));
+                displayCallHistory();
+            } finally {
+                showLoading(false);
+            }
+        }
+
+        function displayCallHistory() {
+            const historyDiv = document.getElementById('callHistory');
+            if (callHistory.length === 0) {
+                historyDiv.innerHTML = '<p style="color: #666; font-style: italic;">Kõnesid pole veel tehtud</p>';
+                return;
+            }
+
+            historyDiv.innerHTML = callHistory.map(call => `
+                <div class="call-entry ${call.status}">
+                    <strong>${call.number}</strong> - ${call.time}<br>
+                    ${call.status === 'success' ? 
+                        `✅ Õnnestus (SID: ${call.callSid})` : 
+                        `❌ Ebaõnnestus: ${call.error}`
+                    }
+                </div>
+            `).join('');
+        }
+
+        // Keyboard support
+        document.addEventListener('keydown', function(event) {
+            if (event.key >= '0' && event.key <= '9') {
+                addDigit(event.key);
+            } else if (event.key === '*' || event.key === '#') {
+                addDigit(event.key);
+            } else if (event.key === '+') {
+                addDigit('+');
+            } else if (event.key === 'Backspace') {
+                clearNumber();
+            } else if (event.key === 'Enter') {
+                makeCall();
+            }
+        });
+
+        // Initialize display
+        updateDisplay();
+    </script>
+</body>
+</html> 

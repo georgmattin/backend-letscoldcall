@@ -1,0 +1,895 @@
+<!DOCTYPE html>
+<html lang="et">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Voice Dialer - Admin</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        .admin-container {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            padding: 40px;
+            width: 100%;
+            max-width: 800px;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .admin-container::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 5px;
+            background: linear-gradient(90deg, #667eea, #764ba2);
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+
+        .header h1 {
+            color: #333;
+            font-size: 2.5rem;
+            margin-bottom: 10px;
+            font-weight: 700;
+        }
+
+        .header p {
+            color: #666;
+            font-size: 1.1rem;
+        }
+
+        .login-section, .config-section {
+            display: none;
+        }
+
+        .login-section.active, .config-section.active {
+            display: block;
+        }
+
+        .form-group {
+            margin-bottom: 25px;
+        }
+
+        .form-group label {
+            display: block;
+            margin-bottom: 8px;
+            color: #333;
+            font-weight: 600;
+            font-size: 0.95rem;
+        }
+
+        .form-group input, .form-group textarea {
+            width: 100%;
+            padding: 15px;
+            border: 2px solid #e1e5e9;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            background: #f8f9fa;
+        }
+
+        .form-group input:focus, .form-group textarea:focus {
+            outline: none;
+            border-color: #667eea;
+            background: white;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group textarea {
+            resize: vertical;
+            min-height: 80px;
+        }
+
+        .form-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .form-row {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .btn {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            border-radius: 10px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            width: 100%;
+            margin-top: 10px;
+        }
+
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 20px rgba(102, 126, 234, 0.3);
+        }
+
+        .btn:active {
+            transform: translateY(0);
+        }
+
+        .btn-secondary {
+            background: #6c757d;
+            margin-top: 15px;
+        }
+
+        .btn-secondary:hover {
+            background: #5a6268;
+            box-shadow: 0 10px 20px rgba(108, 117, 125, 0.3);
+        }
+
+        .btn-danger {
+            background: #dc3545;
+        }
+
+        .btn-danger:hover {
+            background: #c82333;
+            box-shadow: 0 10px 20px rgba(220, 53, 69, 0.3);
+        }
+
+        .status {
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 20px;
+            font-weight: 500;
+            text-align: center;
+        }
+
+        .status.success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+
+        .status.error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+
+        .status.info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .config-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 30px;
+        }
+
+        @media (max-width: 768px) {
+            .config-grid {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .config-card {
+            background: #f8f9fa;
+            padding: 25px;
+            border-radius: 15px;
+            border: 1px solid #e9ecef;
+        }
+
+        .config-card h3 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 1.3rem;
+        }
+
+        .current-config {
+            background: #e8f5e8;
+            padding: 20px;
+            border-radius: 10px;
+            margin-bottom: 30px;
+            border-left: 4px solid #28a745;
+        }
+
+        .current-config h3 {
+            color: #155724;
+            margin-bottom: 15px;
+        }
+
+        .config-item {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 10px;
+            padding: 8px 0;
+            border-bottom: 1px solid #dee2e6;
+        }
+
+        .config-item:last-child {
+            border-bottom: none;
+        }
+
+        .config-label {
+            font-weight: 600;
+            color: #495057;
+        }
+
+        .config-value {
+            color: #6c757d;
+            font-family: monospace;
+            word-break: break-all;
+        }
+
+        .hidden-value {
+            color: #6c757d;
+            font-style: italic;
+        }
+
+        .logout-btn {
+            position: absolute;
+            top: 20px;
+            right: 20px;
+            background: #dc3545;
+            color: white;
+            border: none;
+            padding: 8px 16px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 0.9rem;
+        }
+
+        .logout-btn:hover {
+            background: #c82333;
+        }
+
+        .help-text {
+            font-size: 0.9rem;
+            color: #6c757d;
+            margin-top: 5px;
+            line-height: 1.4;
+        }
+
+        .test-section {
+            background: #fff3cd;
+            padding: 20px;
+            border-radius: 10px;
+            margin-top: 30px;
+            border-left: 4px solid #ffc107;
+        }
+
+        .test-section h3 {
+            color: #856404;
+            margin-bottom: 15px;
+        }
+
+        .test-results {
+            margin-top: 15px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            border: 1px solid #ffeaa7;
+        }
+
+        .section {
+            margin-bottom: 30px;
+        }
+
+        .recordings-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 10px;
+        }
+
+        .recordings-count {
+            font-weight: 600;
+        }
+
+        .recordings-list {
+            padding: 10px;
+            background: #f8f9fa;
+            border-radius: 10px;
+            min-height: 100px;
+        }
+
+        .recordings-table {
+            background: white;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+
+        .recording-header {
+            display: grid;
+            grid-template-columns: 2fr 2fr 1fr 1fr 3fr;
+            gap: 10px;
+            padding: 15px;
+            background: #007bff;
+            color: white;
+            font-weight: 600;
+        }
+
+        .recording-row {
+            display: grid;
+            grid-template-columns: 2fr 2fr 1fr 1fr 3fr;
+            gap: 10px;
+            padding: 15px;
+            border-bottom: 1px solid #eee;
+            align-items: center;
+        }
+
+        .recording-row:last-child {
+            border-bottom: none;
+        }
+
+        .recording-row:hover {
+            background: #f8f9fa;
+        }
+
+        .recording-actions {
+            display: flex;
+            gap: 5px;
+        }
+
+        .btn-small {
+            padding: 5px 10px;
+            font-size: 12px;
+            border: none;
+            border-radius: 4px;
+            background: #007bff;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+
+        .btn-small:hover {
+            background: #0056b3;
+        }
+
+        .status-completed {
+            color: #28a745;
+            font-weight: 600;
+        }
+
+        .status-failed {
+            color: #dc3545;
+            font-weight: 600;
+        }
+
+        .status-in-progress {
+            color: #ffc107;
+            font-weight: 600;
+        }
+    </style>
+</head>
+<body>
+    <div class="admin-container">
+        <button class="logout-btn" onclick="logout()" style="display: none;" id="logoutBtn">Logi välja</button>
+        
+        <div class="header">
+            <h1>🎯 Voice Dialer Admin</h1>
+            <p>Twilio konfiguratsiooni haldamine</p>
+        </div>
+
+        <div id="status"></div>
+
+        <!-- Login Section -->
+        <div class="login-section active" id="loginSection">
+            <form onsubmit="login(event)">
+                <div class="form-group">
+                    <label for="username">Kasutajanimi</label>
+                    <input type="text" id="username" name="username" required value="admin">
+                </div>
+                <div class="form-group">
+                    <label for="password">Parool</label>
+                    <input type="password" id="password" name="password" required placeholder="admin123">
+                    <div class="help-text">Vaikimisi: admin123 (palun muuda pärast sisselogimist!)</div>
+                </div>
+                <button type="submit" class="btn">Logi sisse</button>
+            </form>
+        </div>
+
+        <!-- Configuration Section -->
+        <div class="config-section" id="configSection">
+            <!-- Current Configuration Display -->
+            <div class="current-config" id="currentConfig" style="display: none;">
+                <h3>📋 Praegune konfiguratsioon</h3>
+                <div id="configDisplay"></div>
+            </div>
+
+            <div class="config-grid">
+                <!-- Twilio Configuration -->
+                <div class="config-card">
+                    <h3>🔧 Twilio seadistused</h3>
+                    <form onsubmit="saveConfig(event)">
+                        <div class="form-group">
+                            <label for="accountSid">Account SID</label>
+                            <input type="text" id="accountSid" name="accountSid" required 
+                                   placeholder="AC...">
+                            <div class="help-text">Twilio Console → Account Info</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="authToken">Auth Token</label>
+                            <input type="password" id="authToken" name="authToken" required 
+                                   placeholder="Twilio Auth Token">
+                            <div class="help-text">Twilio Console → Account Info</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="apiKey">API Key</label>
+                            <input type="text" id="apiKey" name="apiKey" required 
+                                   placeholder="SK...">
+                            <div class="help-text">Twilio Console → API Keys & Tokens</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="apiSecret">API Secret</label>
+                            <input type="password" id="apiSecret" name="apiSecret" required 
+                                   placeholder="API Secret">
+                            <div class="help-text">API Key Secret (salvestatud turvaliselt)</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="phoneNumber">Telefoni number</label>
+                            <input type="tel" id="phoneNumber" name="phoneNumber" required 
+                                   placeholder="+1234567890">
+                            <div class="help-text">Twilio ostetud telefoninumber</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="twimlAppSid">TwiML App SID</label>
+                            <input type="text" id="twimlAppSid" name="twimlAppSid" required 
+                                   placeholder="AP...">
+                            <div class="help-text">Twilio Console → TwiML Apps</div>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="webhookUrl">Webhook URL</label>
+                            <input type="url" id="webhookUrl" name="webhookUrl" 
+                                   placeholder="https://your-domain.ngrok.io/api/voice">
+                            <div class="help-text">Avalik URL webhook'ide jaoks (nt. ngrok)</div>
+                        </div>
+                        
+                        <button type="submit" class="btn">💾 Salvesta konfiguratsioon</button>
+                    </form>
+                </div>
+
+                <!-- Admin Settings -->
+                <div class="config-card">
+                    <h3>👤 Admin seadistused</h3>
+                    
+                    <form onsubmit="changePassword(event)">
+                        <div class="form-group">
+                            <label for="currentPassword">Praegune parool</label>
+                            <input type="password" id="currentPassword" name="currentPassword" required>
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="newPassword">Uus parool</label>
+                            <input type="password" id="newPassword" name="newPassword" required 
+                                   minlength="6">
+                        </div>
+                        
+                        <div class="form-group">
+                            <label for="confirmPassword">Kinnita uus parool</label>
+                            <input type="password" id="confirmPassword" name="confirmPassword" required 
+                                   minlength="6">
+                        </div>
+                        
+                        <button type="submit" class="btn btn-secondary">🔒 Muuda parooli</button>
+                    </form>
+
+                    <div class="test-section">
+                        <h3>🧪 Ühenduse test</h3>
+                        <p>Testi Twilio ühendust pärast konfiguratsiooni salvestamist</p>
+                        <button type="button" class="btn btn-secondary" onclick="testConnection()">
+                            🔍 Testi ühendust
+                        </button>
+                        <div class="test-results" id="testResults" style="display: none;"></div>
+                    </div>
+                </div>
+            </div>
+
+            <div style="text-align: center; margin-top: 30px;">
+                <a href="/" class="btn btn-secondary" style="text-decoration: none; display: inline-block;">
+                    🏠 Tagasi dialerisse
+                </a>
+            </div>
+
+            <div class="section">
+                <h3>🎙️ Kõnede salvestised</h3>
+                <div class="form-group">
+                    <button onclick="loadRecordings()" class="btn">📥 Värskenda</button>
+                    <button onclick="syncRecordings()" class="btn btn-secondary">🔄 Sünkroniseeri Twilio-st</button>
+                </div>
+                <div id="recordingsList" class="recordings-list">
+                    <p>Kliki "Värskenda", et salvestisi laadida...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let isLoggedIn = false;
+
+        // Check if already logged in
+        async function checkAuth() {
+            try {
+                const response = await fetch('/api/admin/check-auth');
+                if (response.ok) {
+                    isLoggedIn = true;
+                    showConfigSection();
+                    loadCurrentConfig();
+                }
+            } catch (error) {
+                console.log('Not authenticated');
+            }
+        }
+
+        // Login function
+        async function login(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const credentials = {
+                username: formData.get('username'),
+                password: formData.get('password')
+            };
+
+            try {
+                showStatus('Sisselogimine...', 'info');
+                
+                const response = await fetch('/api/admin/login', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(credentials)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    isLoggedIn = true;
+                    showStatus('✅ Sisselogimine õnnestus!', 'success');
+                    showConfigSection();
+                    loadCurrentConfig();
+                } else {
+                    showStatus('❌ ' + (result.error || 'Sisselogimine ebaõnnestus'), 'error');
+                }
+            } catch (error) {
+                showStatus('❌ Ühenduse viga: ' + error.message, 'error');
+            }
+        }
+
+        // Logout function
+        async function logout() {
+            try {
+                await fetch('/api/admin/logout', { method: 'POST' });
+                isLoggedIn = false;
+                showLoginSection();
+                showStatus('Välja logitud', 'info');
+            } catch (error) {
+                console.error('Logout error:', error);
+            }
+        }
+
+        // Show/hide sections
+        function showLoginSection() {
+            document.getElementById('loginSection').classList.add('active');
+            document.getElementById('configSection').classList.remove('active');
+            document.getElementById('logoutBtn').style.display = 'none';
+        }
+
+        function showConfigSection() {
+            document.getElementById('loginSection').classList.remove('active');
+            document.getElementById('configSection').classList.add('active');
+            document.getElementById('logoutBtn').style.display = 'block';
+        }
+
+        // Load current configuration
+        async function loadCurrentConfig() {
+            try {
+                const response = await fetch('/api/admin/config');
+                if (response.ok) {
+                    const config = await response.json();
+                    displayCurrentConfig(config);
+                    populateForm(config);
+                }
+            } catch (error) {
+                console.error('Error loading config:', error);
+            }
+        }
+
+        // Display current configuration
+        function displayCurrentConfig(config) {
+            const configDisplay = document.getElementById('configDisplay');
+            const currentConfigDiv = document.getElementById('currentConfig');
+            
+            if (config && config.account_sid) {
+                currentConfigDiv.style.display = 'block';
+                configDisplay.innerHTML = `
+                    <div class="config-item">
+                        <span class="config-label">Account SID:</span>
+                        <span class="config-value">${config.account_sid}</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="config-label">Auth Token:</span>
+                        <span class="hidden-value">••••••••••••••••</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="config-label">API Key:</span>
+                        <span class="config-value">${config.api_key}</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="config-label">Telefoni number:</span>
+                        <span class="config-value">${config.phone_number}</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="config-label">TwiML App SID:</span>
+                        <span class="config-value">${config.twiml_app_sid}</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="config-label">Webhook URL:</span>
+                        <span class="config-value">${config.webhook_url || 'Määramata'}</span>
+                    </div>
+                    <div class="config-item">
+                        <span class="config-label">Viimati uuendatud:</span>
+                        <span class="config-value">${new Date(config.updated_at).toLocaleString('et-EE')}</span>
+                    </div>
+                `;
+            } else {
+                currentConfigDiv.style.display = 'none';
+            }
+        }
+
+        // Populate form with current config
+        function populateForm(config) {
+            if (config) {
+                document.getElementById('accountSid').value = config.account_sid || '';
+                document.getElementById('apiKey').value = config.api_key || '';
+                document.getElementById('phoneNumber').value = config.phone_number || '';
+                document.getElementById('twimlAppSid').value = config.twiml_app_sid || '';
+                document.getElementById('webhookUrl').value = config.webhook_url || '';
+                // Don't populate sensitive fields (auth_token, api_secret)
+            }
+        }
+
+        // Save configuration
+        async function saveConfig(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const config = {
+                account_sid: formData.get('accountSid'),
+                auth_token: formData.get('authToken'),
+                api_key: formData.get('apiKey'),
+                api_secret: formData.get('apiSecret'),
+                phone_number: formData.get('phoneNumber'),
+                twiml_app_sid: formData.get('twimlAppSid'),
+                webhook_url: formData.get('webhookUrl')
+            };
+
+            try {
+                showStatus('Salvestamine...', 'info');
+                
+                const response = await fetch('/api/admin/config', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(config)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showStatus('✅ Konfiguratsioon salvestatud!', 'success');
+                    loadCurrentConfig();
+                    // Clear sensitive fields
+                    document.getElementById('authToken').value = '';
+                    document.getElementById('apiSecret').value = '';
+                } else {
+                    showStatus('❌ ' + (result.error || 'Salvestamine ebaõnnestus'), 'error');
+                }
+            } catch (error) {
+                showStatus('❌ Ühenduse viga: ' + error.message, 'error');
+            }
+        }
+
+        // Change password
+        async function changePassword(event) {
+            event.preventDefault();
+            
+            const formData = new FormData(event.target);
+            const newPassword = formData.get('newPassword');
+            const confirmPassword = formData.get('confirmPassword');
+            
+            if (newPassword !== confirmPassword) {
+                showStatus('❌ Paroolid ei kattu!', 'error');
+                return;
+            }
+
+            const data = {
+                currentPassword: formData.get('currentPassword'),
+                newPassword: newPassword
+            };
+
+            try {
+                showStatus('Parooli muutmine...', 'info');
+                
+                const response = await fetch('/api/admin/change-password', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json'
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+
+                if (response.ok) {
+                    showStatus('✅ Parool muudetud!', 'success');
+                    event.target.reset();
+                } else {
+                    showStatus('❌ ' + (result.error || 'Parooli muutmine ebaõnnestus'), 'error');
+                }
+            } catch (error) {
+                showStatus('❌ Ühenduse viga: ' + error.message, 'error');
+            }
+        }
+
+        // Test connection
+        async function testConnection() {
+            try {
+                showStatus('🔗 Testin Twilio ühendust...', 'info');
+                
+                const response = await fetch('/api/test-twilio');
+                const result = await response.json();
+                
+                if (result.success) {
+                    showStatus('✅ Twilio ühendus töötab!', 'success');
+                } else {
+                    showStatus('❌ Twilio ühendus ebaõnnestus: ' + result.error, 'error');
+                }
+            } catch (error) {
+                console.error('Connection test error:', error);
+                showStatus('❌ Ühenduse test ebaõnnestus', 'error');
+            }
+        }
+
+        // Show status message
+        function showStatus(message, type) {
+            const statusDiv = document.getElementById('status');
+            statusDiv.innerHTML = `<div class="status ${type}">${message}</div>`;
+            
+            // Auto-hide after 5 seconds for success messages
+            if (type === 'success') {
+                setTimeout(() => {
+                    statusDiv.innerHTML = '';
+                }, 5000);
+            }
+        }
+
+        // Load recordings
+        async function loadRecordings() {
+            try {
+                showStatus('📥 Laen salvestisi...', 'info');
+                
+                const response = await fetch('/api/recordings');
+                const result = await response.json();
+                
+                if (result.success) {
+                    displayRecordings(result.recordings);
+                    showStatus(`✅ Laetud ${result.recordings.length} salvestist`, 'success');
+                } else {
+                    showStatus('❌ Salvestiste laadimine ebaõnnestus', 'error');
+                }
+            } catch (error) {
+                console.error('Load recordings error:', error);
+                showStatus('❌ Salvestiste laadimine ebaõnnestus', 'error');
+            }
+        }
+
+        async function syncRecordings() {
+            try {
+                showStatus('🔄 Sünkroniseerin salvestisi Twilio API-st...', 'info');
+                
+                const response = await fetch('/api/sync-recordings', {
+                    method: 'POST'
+                });
+                const result = await response.json();
+                
+                if (result.success) {
+                    showStatus(`✅ ${result.message}`, 'success');
+                    // Automatically reload recordings after sync
+                    setTimeout(() => loadRecordings(), 1000);
+                } else {
+                    showStatus('❌ Sünkroniseerimine ebaõnnestus: ' + (result.error || 'Unknown error'), 'error');
+                }
+            } catch (error) {
+                console.error('Sync recordings error:', error);
+                showStatus('❌ Sünkroniseerimine ebaõnnestus', 'error');
+            }
+        }
+
+        function displayRecordings(recordings) {
+            const recordingsList = document.getElementById('recordingsList');
+            
+            if (recordings.length === 0) {
+                recordingsList.innerHTML = '<p>Salvestisi ei leitud.</p>';
+                return;
+            }
+            
+            let html = '<div class="recordings-table">';
+            html += '<div class="recording-header">';
+            html += '<span>Kuupäev</span>';
+            html += '<span>Kõne ID</span>';
+            html += '<span>Kestus</span>';
+            html += '<span>Staatus</span>';
+            html += '<span>Tegevused</span>';
+            html += '</div>';
+            
+            recordings.forEach(recording => {
+                const date = new Date(recording.created_at).toLocaleString('et-EE');
+                const duration = recording.duration ? `${recording.duration}s` : 'N/A';
+                
+                html += '<div class="recording-row">';
+                html += `<span>${date}</span>`;
+                html += `<span>${recording.call_sid.substring(0, 10)}...</span>`;
+                html += `<span>${duration}</span>`;
+                html += `<span class="status-${recording.status}">${recording.status}</span>`;
+                html += '<span class="recording-actions">';
+                html += `<button class="btn-small" onclick="downloadRecording('${recording.recording_sid}', 'wav')">📥 WAV</button>`;
+                html += `<button class="btn-small" onclick="downloadRecording('${recording.recording_sid}', 'mp3')">📥 MP3</button>`;
+                html += `<button class="btn-small" onclick="playRecording('${recording.recording_url}')">▶️ Kuula</button>`;
+                html += '</span>';
+                html += '</div>';
+            });
+            
+            html += '</div>';
+            recordingsList.innerHTML = html;
+        }
+
+        function downloadRecording(recordingSid, format) {
+            const url = `/api/recording/${recordingSid}/download?format=${format}`;
+            window.open(url, '_blank');
+        }
+
+        function playRecording(recordingUrl) {
+            // Create audio player modal or open in new tab
+            const audioUrl = recordingUrl.endsWith('.mp3') ? recordingUrl : recordingUrl + '.mp3';
+            window.open(audioUrl, '_blank');
+        }
+
+        // Initialize
+        document.addEventListener('DOMContentLoaded', function() {
+            checkAuth();
+        });
+    </script>
+</body>
+</html> 
