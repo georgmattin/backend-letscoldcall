@@ -6,12 +6,9 @@
   "scripts": {
     "start": "node server.js",
     "dev": "nodemon server.js",
+    "build": "echo \"No build step needed for Node.js backend\"",
     "test": "echo \"Error: no test specified\" && exit 1",
-    "test-azure": "node test-azure-openai.js",
-    "setup-webhook": "node setup-incoming-calls.js",
-    "update-webhook": "node update-webhook-url.js",
-    "tunnel": "npx localtunnel --port 3000",
-    "ngrok": "npx ngrok http 3000"
+    "update-webhook": "node update-webhook-url.js"
   },
   "keywords": [
     "twilio",
@@ -33,7 +30,7 @@
     "express-session": "^1.18.1",
     "form-data": "^4.0.0",
     "next-themes": "^0.4.6",
-    "sqlite3": "^5.1.7",
+    "session-file-store": "^1.5.0",
     "twilio": "^4.20.1",
     "ws": "^8.18.2"
   },

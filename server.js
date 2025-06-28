@@ -296,14 +296,36 @@ app.use(express.urlencoded({ extended: true })); // This is crucial for Twilio w
 app.use(express.static('public')); // Serve static files from public directory
 
 // Session middleware for admin authentication
+// For production, we'll use a basic file-based session store to avoid memory leaks
+let sessionStore;
+const isProduction = process.env.NODE_ENV === 'production';
+
+if (isProduction) {
+    // In production, use a simple file-based session store
+    const FileStore = require('session-file-store')(session);
+    sessionStore = new FileStore({
+        path: '/tmp/sessions', // Railway has access to /tmp
+        ttl: 86400, // 24 hours
+        retries: 0
+    });
+    console.log('📁 Using file-based session store for production');
+} else {
+    // In development, use memory store (default)
+    sessionStore = new session.MemoryStore();
+    console.log('💾 Using memory-based session store for development');
+}
+
 app.use(session({
+    store: sessionStore,
     secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: false, // Set to true if using HTTPS
+        secure: isProduction, // Use secure cookies in production (HTTPS)
+        httpOnly: true, // Prevent XSS attacks
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    }
+    },
+    name: 'coldcall.sid' // Custom session name
 }));
 
 // Load Twilio configuration from database
@@ -328,7 +350,8 @@ async function loadTwilioConfig() {
                     api_key: process.env.TWILIO_API_KEY,
                     api_secret: process.env.TWILIO_API_SECRET,
                     phone_number: process.env.TWILIO_PHONE_NUMBER,
-                    twiml_app_sid: process.env.TWILIO_TWIML_APP_SID
+                    twiml_app_sid: process.env.TWILIO_TWIML_APP_SID,
+                    webhook_url: process.env.WEBHOOK_URL
                 };
                 console.log('✅ Using environment variables for Twilio config');
                 return true;

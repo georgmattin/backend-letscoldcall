@@ -1,0 +1,22 @@
+[build]
+  # Nothing needed for build since we're using Node.js directly
+
+[deploy]
+  # Start command for Railway
+  startCommand = "npm start"
+  
+  # Health check endpoint
+  healthcheckPath = "/api"
+  
+  # Timeout settings
+  healthcheckTimeout = 30
+  
+  # Restart policy
+  restartPolicyType = "ON_FAILURE"
+  restartPolicyMaxRetries = 3
+
+[environments.production]
+  # Environment variables that should be set in Railway dashboard
+  # These are just placeholders - actual values should be set in Railway UI
+  NODE_ENV = "production"
+  PORT = "3002" 
