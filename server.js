@@ -3,7 +3,7 @@ const cors = require('cors');
 const twilio = require('twilio');
 const path = require('path');
 const session = require('express-session');
-const Database = require('./database');
+const SupabaseDatabase = require('./utils/supabase-database');
 const fs = require('fs');
 const https = require('https');
 const WebSocket = require('ws');
@@ -30,7 +30,7 @@ const app = express();
 const PORT = process.env.PORT || 3002;
 
 // Initialize database
-const db = new Database();
+const db = new SupabaseDatabase();
 let twilioConfig = null;
 let client = null;
 
