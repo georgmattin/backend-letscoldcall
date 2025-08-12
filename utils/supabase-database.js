@@ -131,6 +131,7 @@ class SupabaseDatabase {
                     .from('user_twilio_configs')
                     .insert([{
                         user_id: userId,
+                        friendly_name: config.friendly_name || 'My Twilio Configuration',
                         account_sid: config.account_sid,
                         auth_token: config.auth_token,
                         api_key: config.api_key,

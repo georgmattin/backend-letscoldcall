@@ -7,6 +7,7 @@ const SupabaseDatabase = require('./utils/supabase-database');
 const fs = require('fs');
 const https = require('https');
 const WebSocket = require('ws');
+const { createClient } = require('@supabase/supabase-js');
 const {
     uploadRecordingToSupabase,
     saveRecordingMetadata,
@@ -29,10 +30,82 @@ require('dotenv').config();
 const app = express();
 const PORT = process.env.PORT || 3002;
 
+// Function to track AI usage from backend (now handled directly in transcription function)
+// This function is deprecated - AI usage tracking is now done directly in each process
+
 // Initialize database
 const db = new SupabaseDatabase();
-let twilioConfig = null;
-let client = null;
+
+// Initialize Supabase client for user authentication
+let supabaseClient = null;
+
+// Initialize Supabase client
+function initializeSupabaseClient() {
+    try {
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+        
+        if (!supabaseUrl || !supabaseServiceRoleKey) {
+            throw new Error('Missing Supabase configuration: NEXT_PUBLIC_SUPABASE_URL and SUPABASE_SERVICE_ROLE_KEY are required');
+        }
+        
+        supabaseClient = createClient(supabaseUrl, supabaseServiceRoleKey, {
+            auth: {
+                autoRefreshToken: false,
+                persistSession: false
+            }
+        });
+        
+        console.log('✅ Supabase client initialized for user authentication');
+        return true;
+    } catch (error) {
+        console.error('❌ Error initializing Supabase client:', error);
+        return false;
+    }
+}
+
+// Middleware for user authentication using Supabase
+async function requireUserAuth(req, res, next) {
+    try {
+        const authHeader = req.headers.authorization;
+        
+        if (!authHeader || !authHeader.startsWith('Bearer ')) {
+            return res.status(401).json({ 
+                error: 'Authentication required',
+                message: 'Please provide a valid authorization token'
+            });
+        }
+        
+        const token = authHeader.split(' ')[1];
+        
+        if (!supabaseClient) {
+            throw new Error('Supabase client not initialized');
+        }
+        
+        // Verify the user token
+        const { data: { user }, error } = await supabaseClient.auth.getUser(token);
+        
+        if (error || !user) {
+            console.error('❌ User authentication failed:', error?.message || 'No user found');
+            return res.status(401).json({ 
+                error: 'Invalid or expired token',
+                message: 'Please log in again'
+            });
+        }
+        
+        // Add user to request object
+        req.user = user;
+        console.log('✅ User authenticated:', user.id, user.email);
+        next();
+        
+    } catch (error) {
+        console.error('❌ Authentication error:', error);
+        res.status(401).json({ 
+            error: 'Authentication failed',
+            message: error.message
+        });
+    }
+}
 
 // Create recordings directory if it doesn't exist
 const recordingsDir = path.join(__dirname, 'recordings');
@@ -105,9 +178,10 @@ async function processRealtimeAudio(audioBuffer, callSid, timestamp) {
 }
 
 // Function to transcribe audio buffer using Azure OpenAI
-async function transcribeRecordingAudio(recordingSid, audioBuffer, fileName) {
+async function transcribeRecordingAudio(recordingSid, audioBuffer, fileName, userId = null) {
     try {
         console.log('🎙️ Starting transcription for recording:', recordingSid);
+        const startTime = Date.now();
         
         // Update status to processing
         await updateRecordingWithTranscription(recordingSid, {
@@ -122,8 +196,10 @@ async function transcribeRecordingAudio(recordingSid, audioBuffer, fileName) {
         if (transcriptionResult.success && transcriptionResult.text) {
             console.log('✅ Transcription completed:', transcriptionResult.text.substring(0, 100) + '...');
             
-            // Save transcription to database
-            await updateRecordingWithTranscription(recordingSid, transcriptionResult);
+            // Save transcription to database and get recording UUID
+            const recordingData = await updateRecordingWithTranscription(recordingSid, transcriptionResult);
+            
+            // Note: AI usage tracking is handled by frontend when user explicitly requests transcription
             
             return transcriptionResult;
         } else {
@@ -220,7 +296,7 @@ async function downloadRecordingToSupabase(recordingSid, recordingUrl, twilioCon
                         console.log('✅ Recording uploaded to Supabase Storage:', storageResult.storagePath);
                         
                         // Start transcription process (async, don't wait for completion)
-                        transcribeRecordingAudio(recordingSid, audioBuffer, storageResult.fileName)
+                        transcribeRecordingAudio(recordingSid, audioBuffer, storageResult.fileName, userId)
                             .then((transcriptionResult) => {
                                 if (transcriptionResult.success) {
                                     console.log('🎙️ Auto-transcription completed for:', recordingSid);
@@ -296,89 +372,78 @@ app.use(express.urlencoded({ extended: true })); // This is crucial for Twilio w
 app.use(express.static('public')); // Serve static files from public directory
 
 // Session middleware for admin authentication
-// For production, we'll use a basic file-based session store to avoid memory leaks
-let sessionStore;
-const isProduction = process.env.NODE_ENV === 'production';
-
-if (isProduction) {
-    // In production, use a simple file-based session store
-    const FileStore = require('session-file-store')(session);
-    sessionStore = new FileStore({
-        path: '/tmp/sessions', // Railway has access to /tmp
-        ttl: 86400, // 24 hours
-        retries: 0
-    });
-    console.log('📁 Using file-based session store for production');
-} else {
-    // In development, use memory store (default)
-    sessionStore = new session.MemoryStore();
-    console.log('💾 Using memory-based session store for development');
-}
-
 app.use(session({
-    store: sessionStore,
     secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
     resave: false,
     saveUninitialized: false,
     cookie: { 
-        secure: isProduction, // Use secure cookies in production (HTTPS)
-        httpOnly: true, // Prevent XSS attacks
+        secure: false, // Set to true if using HTTPS
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
-    },
-    name: 'coldcall.sid' // Custom session name
+    }
 }));
 
-// Load Twilio configuration from database
-async function loadTwilioConfig() {
+// System no longer uses fallback Twilio configuration
+// All Twilio operations now require user-specific configurations
+
+// Load user-specific Twilio configuration
+async function loadUserTwilioConfig(userId) {
     try {
-        twilioConfig = await db.getTwilioConfig();
-        if (twilioConfig) {
-            // Initialize Twilio client with database config
-            client = twilio(twilioConfig.account_sid, twilioConfig.auth_token);
-            console.log('✅ Twilio configuration loaded from database');
-            return true;
+        console.log(`🔄 Loading Twilio config for user: ${userId}`);
+        
+        const userConfig = await db.getTwilioConfig(userId);
+        
+        if (userConfig) {
+            console.log(`✅ User-specific Twilio configuration found for user: ${userId}`);
+            console.log(`📱 Phone number: ${userConfig.phone_number}`);
+            console.log(`🏷️  Config name: ${userConfig.friendly_name || 'Unnamed'}`);
+            return userConfig;
         } else {
-            console.log('⚠️  No Twilio configuration found in database');
-            // Fallback to environment variables
-            const accountSid = process.env.TWILIO_ACCOUNT_SID;
-            const authToken = process.env.TWILIO_AUTH_TOKEN;
-            if (accountSid && authToken) {
-                client = twilio(accountSid, authToken);
-                twilioConfig = {
-                    account_sid: accountSid,
-                    auth_token: authToken,
-                    api_key: process.env.TWILIO_API_KEY,
-                    api_secret: process.env.TWILIO_API_SECRET,
-                    phone_number: process.env.TWILIO_PHONE_NUMBER,
-                    twiml_app_sid: process.env.TWILIO_TWIML_APP_SID,
-                    webhook_url: process.env.WEBHOOK_URL
-                };
-                console.log('✅ Using environment variables for Twilio config');
-                return true;
-            }
-            return false;
+            console.log(`⚠️  No user-specific Twilio configuration found for user: ${userId}`);
+            return null;
         }
     } catch (error) {
-        console.error('❌ Error loading Twilio config:', error);
-        return false;
+        console.error(`❌ Error loading user Twilio config for user ${userId}:`, error);
+        throw error;
     }
 }
 
-// Test Twilio connection
-async function testTwilioConnection() {
+// Create Twilio client for user-specific configuration
+function createUserTwilioClient(userConfig) {
     try {
-        if (!client || !twilioConfig) {
-            throw new Error('Twilio not configured');
+        const userClient = twilio(userConfig.account_sid, userConfig.auth_token);
+        console.log(`✅ User Twilio client created successfully`);
+        return userClient;
+    } catch (error) {
+        console.error('❌ Error creating user Twilio client:', error);
+        throw error;
+    }
+}
+
+// Test user-specific Twilio connection
+async function testUserTwilioConnection(userConfig) {
+    try {
+        if (!userConfig) {
+            throw new Error('User Twilio configuration not provided');
         }
         
-        const account = await client.api.accounts(twilioConfig.account_sid).fetch();
-        console.log('✅ Twilio connection successful!');
+        const userClient = createUserTwilioClient(userConfig);
+        const account = await userClient.api.accounts(userConfig.account_sid).fetch();
+        
+        console.log('✅ User Twilio connection successful!');
         console.log(`Account: ${account.friendlyName}`);
         console.log(`Account SID: ${account.sid}`);
-        console.log(`Phone Number: ${twilioConfig.phone_number}`);
-        return { success: true, account, phoneNumber: twilioConfig.phone_number };
+        console.log(`Phone Number: ${userConfig.phone_number}`);
+        
+        return { 
+            success: true, 
+            account: {
+                friendlyName: account.friendlyName,
+                sid: account.sid,
+                phoneNumber: userConfig.phone_number
+            }
+        };
     } catch (error) {
-        console.error('❌ Twilio connection failed:', error.message);
+        console.error('❌ User Twilio connection failed:', error.message);
         return { success: false, error: error.message };
     }
 }
@@ -394,73 +459,99 @@ app.get('/api', (req, res) => {
         version: '2.0.0',
         endpoints: {
             'GET /': 'Dialer interface',
-            'GET /admin': 'Admin interface',
+            'GET /admin': 'Admin interface', 
             'GET /api': 'API info',
-            'GET /api/test-twilio': 'Test Twilio connection',
-            'POST /api/make-call': 'Make a phone call',
+            'GET /api/user/test-twilio': 'Test user Twilio connection (requires auth)',
+            'POST /api/make-call': 'Make a phone call (requires auth)',
             'GET /api/call-status/:callSid': 'Get call status',
-            'GET /api/access-token': 'Get Access Token for Voice SDK',
+            'GET /api/access-token': 'Get Access Token for Voice SDK (requires auth)',
+            'GET /api/user/twilio-config': 'Get user Twilio configuration (requires auth)',
+            'POST /api/user/twilio-config': 'Save user Twilio configuration (requires auth)',
             'POST /api/admin/login': 'Admin login',
-            'POST /api/admin/logout': 'Admin logout',
-            'GET /api/admin/config': 'Get Twilio configuration',
-            'POST /api/admin/config': 'Save Twilio configuration'
+            'POST /api/admin/logout': 'Admin logout'
         },
-        twilio: {
-            accountSid: twilioConfig?.account_sid || 'Not configured',
-            phoneNumber: twilioConfig?.phone_number || 'Not configured',
-            status: client ? 'Connected' : 'Not configured'
+        authentication: {
+            type: 'User-specific Twilio configurations',
+            description: 'All Twilio operations require user authentication and user-configured Twilio accounts',
+            note: 'System-level fallback configurations removed for security and cost control'
         }
     });
 });
 
-// Generate Access Token for Voice SDK
-app.get('/api/access-token', (req, res) => {
+// Generate Access Token for Voice SDK (now user-specific)
+app.get('/api/access-token', requireUserAuth, async (req, res) => {
     try {
-        if (!twilioConfig) {
-            throw new Error('Twilio not configured. Please configure Twilio settings in admin panel.');
+        const userId = req.user.id;
+        
+        console.log(`🔄 Generating access token for user: ${userId}`);
+        
+        // Load user-specific Twilio configuration
+        const userTwilioConfig = await loadUserTwilioConfig(userId);
+        
+        if (!userTwilioConfig) {
+            console.log(`❌ No Twilio configuration found for user: ${userId}`);
+            return res.status(404).json({ 
+                error: 'Twilio configuration not found',
+                message: 'Please configure your Twilio settings in the Settings page.',
+                redirectTo: '/settings'
+            });
         }
 
         const AccessToken = twilio.jwt.AccessToken;
         const VoiceGrant = AccessToken.VoiceGrant;
 
-        // Use API Key and Secret from database config
-        const apiKey = twilioConfig.api_key;
-        const apiSecret = twilioConfig.api_secret;
+        // Use API Key and Secret from user's config
+        const apiKey = userTwilioConfig.api_key;
+        const apiSecret = userTwilioConfig.api_secret;
 
         if (!apiKey || !apiSecret) {
-            throw new Error('TWILIO_API_KEY and TWILIO_API_SECRET are required for JWT token generation');
+            console.log(`❌ Missing API credentials for user: ${userId}`);
+            return res.status(400).json({ 
+                error: 'Incomplete Twilio configuration',
+                message: 'API Key and API Secret are required. Please update your Twilio settings.',
+                redirectTo: '/settings'
+            });
         }
 
+        const userIdentity = `user_${userId}`;
+        
         const token = new AccessToken(
-            twilioConfig.account_sid, // Account SID
-            apiKey,                   // API Key SID
-            apiSecret,                // API Secret
+            userTwilioConfig.account_sid, // Account SID
+            apiKey,                       // API Key SID
+            apiSecret,                    // API Secret
             { 
-                identity: 'user_browser_client', // Fixed identity that matches TwiML
-                ttl: 3600                // Token valid for 1 hour
+                identity: userIdentity,   // User-specific identity
+                ttl: 3600                 // Token valid for 1 hour
             }
         );
 
         // Create a Voice grant
         const voiceGrant = new VoiceGrant({
-            outgoingApplicationSid: twilioConfig.twiml_app_sid,  // TwiML App SID for outgoing calls
-            incomingAllow: true                                  // Allow incoming calls
+            outgoingApplicationSid: userTwilioConfig.twiml_app_sid,  // TwiML App SID for outgoing calls
+            incomingAllow: true                                      // Allow incoming calls
         });
 
         token.addGrant(voiceGrant);
 
         res.json({
             token: token.toJwt(),
-            identity: token.identity
+            identity: token.identity,
+            config: {
+                phone_number: userTwilioConfig.phone_number,
+                friendly_name: userTwilioConfig.friendly_name || 'User Configuration',
+                account_sid: userTwilioConfig.account_sid
+            }
         });
 
-        console.log('✅ Access token generated for identity:', token.identity);
+        console.log(`✅ Access token generated for user: ${userId}, identity: ${token.identity}`);
+        console.log(`📱 Using phone number: ${userTwilioConfig.phone_number}`);
 
     } catch (error) {
         console.error('❌ Error generating access token:', error);
         res.status(500).json({ 
             error: 'Token generation failed',
-            details: error.message 
+            message: error.message,
+            details: error.stack
         });
     }
 });
@@ -503,7 +594,7 @@ app.post('/api/recording/:recordingSid/transcribe', async (req, res) => {
         const fileName = recording.storage_path.split('/').pop() || 'recording.wav';
         
         // Start transcription
-        const transcriptionResult = await transcribeRecordingAudio(recordingSid, audioBuffer, fileName);
+        const transcriptionResult = await transcribeRecordingAudio(recordingSid, audioBuffer, fileName, recording.user_id);
         
         res.json({
             success: transcriptionResult.success,
@@ -609,7 +700,7 @@ app.post('/api/recordings/transcribe-batch', async (req, res) => {
                 const fileName = recording.storage_path.split('/').pop() || 'recording.wav';
                 
                 // Transcribe
-                const transcriptionResult = await transcribeRecordingAudio(recording.recording_sid, audioBuffer, fileName);
+                const transcriptionResult = await transcribeRecordingAudio(recording.recording_sid, audioBuffer, fileName, recording.user_id);
                 
                 results.push({
                     recording_sid: recording.recording_sid,
@@ -651,52 +742,40 @@ app.post('/api/recordings/transcribe-batch', async (req, res) => {
     }
 });
 
-// Test Twilio connection endpoint
-app.get('/api/test-twilio', async (req, res) => {
-    try {
-        const result = await testTwilioConnection();
-        if (result.success) {
-            res.json({
-                success: true,
-                message: 'Twilio connection is working',
-                account: result.account,
-                phoneNumber: result.phoneNumber
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                message: 'Failed to connect to Twilio',
-                error: result.error
-            });
-        }
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            message: 'Error testing Twilio connection',
-            error: error.message
-        });
-    }
-});
+// System-level test endpoint removed - use /api/user/test-twilio instead
+// All Twilio operations now require user authentication and user-specific configurations
 
-// Direct call endpoint - bypasses webhook completely
-app.post('/api/make-call', async (req, res) => {
+// Direct call endpoint - now user-specific
+app.post('/api/make-call', requireUserAuth, async (req, res) => {
     try {
         const { phoneNumber } = req.body;
+        const userId = req.user.id;
         
-        console.log('📞 Making direct call to:', phoneNumber);
+        console.log(`📞 Making direct call for user ${userId} to:`, phoneNumber);
         
         if (!phoneNumber) {
             return res.status(400).json({ error: 'Phone number is required' });
         }
 
-        if (!client || !twilioConfig) {
-            throw new Error('Twilio not configured');
+        // Load user-specific Twilio configuration
+        const userTwilioConfig = await loadUserTwilioConfig(userId);
+        
+        if (!userTwilioConfig) {
+            console.log(`❌ No Twilio configuration found for user: ${userId}`);
+            return res.status(404).json({ 
+                error: 'Twilio configuration not found',
+                message: 'Please configure your Twilio settings in the Settings page.',
+                redirectTo: '/settings'
+            });
         }
 
-        // Make call directly using Twilio API with recording enabled
-        const call = await client.calls.create({
+        // Create user-specific Twilio client
+        const userClient = createUserTwilioClient(userTwilioConfig);
+
+        // Make call directly using user's Twilio API with recording enabled
+        const call = await userClient.calls.create({
             to: phoneNumber,
-            from: twilioConfig.phone_number,
+            from: userTwilioConfig.phone_number,
             // TwiML with recording enabled for both parties
             twiml: `<Response>
                         <Say voice="alice" language="en-US">Hello! This call is being recorded for quality purposes.</Say>
@@ -706,25 +785,29 @@ app.post('/api/make-call', async (req, res) => {
                     </Response>`
         });
 
-        console.log('✅ Call created successfully:', call.sid);
+        console.log(`✅ Call created successfully for user ${userId}:`, call.sid);
+        console.log(`📱 Using phone number: ${userTwilioConfig.phone_number}`);
         
         res.json({
             success: true,
             callSid: call.sid,
-            message: 'Call initiated successfully with recording enabled'
+            message: 'Call initiated successfully with recording enabled',
+            fromNumber: userTwilioConfig.phone_number,
+            userConfig: userTwilioConfig.friendly_name || 'User Configuration'
         });
 
     } catch (error) {
         console.error('❌ Error making call:', error);
         res.status(500).json({
             error: 'Call failed',
-            details: error.message
+            message: error.message,
+            details: error.stack
         });
     }
 });
 
 // TwiML endpoint for Voice SDK calls - handles both incoming and outgoing calls
-app.post('/api/voice', (req, res) => {
+app.post('/api/voice', async (req, res) => {
     try {
         console.log('🔥 TwiML ENDPOINT CALLED! 🔥');
         console.log('📞 Request headers:', req.headers);
@@ -741,7 +824,7 @@ app.post('/api/voice', (req, res) => {
     const calledNumber = req.body.To;
     
     // Additional check: make sure this is not a call FROM our browser client
-    const isFromBrowserClient = caller && caller.includes('user_browser_client');
+    const isFromBrowserClient = caller && caller.startsWith('client:user_');
     
     console.log('📞 Call Direction:', req.body.Direction);
     console.log('📞 From:', caller);
@@ -767,7 +850,9 @@ app.post('/api/voice', (req, res) => {
         });
         
         // Dial to the client (this will ring in the browser)
-        dial.client('user_browser_client');
+        // TODO: make this dynamic by mapping calledNumber -> owner user identity.
+        // For now, route to the current user's identity so inbound rings the web client.
+        dial.client('user_92194486-0de3-4dfc-a08f-05c95564d3e8');
         
         console.log('📞 ➡️ Forwarding incoming call to browser client');
     } else if (isIncomingCall && isFromBrowserClient) {
@@ -812,8 +897,10 @@ app.post('/api/voice', (req, res) => {
                            req.query.TargetNumber ||
                            req.body.to ||
                            req.body.called ||
+                           req.body.phoneNumber ||  // Add this!
                            req.query.to ||
                            req.query.called ||
+                           req.query.phoneNumber ||  // Add this!
                            (req.body.params && req.body.params.To) ||
                            (req.body.params && req.body.params.Called) ||
                            (req.body.params && req.body.params.PhoneNumber);
@@ -826,7 +913,24 @@ app.post('/api/voice', (req, res) => {
         console.log('📞 Original phoneNumber was:', phoneNumber);
         console.log('📞 req.body.params debug:', JSON.stringify(req.body.params, null, 2));
         
-        if (finalPhoneNumber && finalPhoneNumber !== twilioConfig?.phone_number) {
+        if (finalPhoneNumber) {
+            // Extract user ID from caller to get user's Twilio config
+            let callerPhoneNumber = '+1234567890'; // fallback
+            try {
+                if (caller && caller.startsWith('client:user_')) {
+                    const userId = caller.replace('client:user_', '');
+                    console.log('📞 Extracted user ID from caller:', userId);
+                    
+                    const userConfig = await loadUserTwilioConfig(userId);
+                    if (userConfig && userConfig.phone_number) {
+                        callerPhoneNumber = userConfig.phone_number;
+                        console.log('📞 Using user phone number as caller ID:', callerPhoneNumber);
+                    }
+                }
+            } catch (error) {
+                console.log('⚠️ Could not load user config for caller ID, using fallback');
+            }
+            
             // Add recording notification
             twiml.say('This call is being recorded for quality purposes.');
             
@@ -839,11 +943,11 @@ app.post('/api/voice', (req, res) => {
             
             // Dial the phone number with recording enabled
             twiml.dial({
-                callerId: twilioConfig?.phone_number || '+1234567890',
+                callerId: callerPhoneNumber,
                 record: 'record-from-ringing',
                 recordingStatusCallback: `${req.protocol}://${req.get('host')}/api/recording-status`,
                 timeout: 30
-            }, phoneNumber);
+            }, finalPhoneNumber);
         } else {
             console.log('📞 No valid phone number provided');
             twiml.say('Hello! This is a Voice SDK test call. Please provide a phone number to dial.');
@@ -889,8 +993,10 @@ app.post('/api/voice', (req, res) => {
                            req.query.TargetNumber ||
                            req.body.to ||
                            req.body.called ||
+                           req.body.phoneNumber ||  // Add this!
                            req.query.to ||
                            req.query.called ||
+                           req.query.phoneNumber ||  // Add this!
                            (req.body.params && req.body.params.To) ||
                            (req.body.params && req.body.params.Called) ||
                            (req.body.params && req.body.params.PhoneNumber);
@@ -898,8 +1004,25 @@ app.post('/api/voice', (req, res) => {
         console.log('📞 📤 Outgoing Voice SDK call - extracted phone number:', phoneNumber);
         console.log('📞 All request params:', { body: req.body, query: req.query });
         
-        if (phoneNumber && phoneNumber !== twilioConfig?.phone_number) {
+        if (phoneNumber) {
             console.log('📞 Making outgoing call with recording:', phoneNumber);
+            
+            // Extract user ID from caller to get user's Twilio config for caller ID
+            let callerPhoneNumber = '+1234567890'; // fallback
+            try {
+                if (caller && caller.startsWith('client:user_')) {
+                    const userId = caller.replace('client:user_', '');
+                    console.log('📞 Extracted user ID for outbound call:', userId);
+                    
+                    const userConfig = await loadUserTwilioConfig(userId);
+                    if (userConfig && userConfig.phone_number) {
+                        callerPhoneNumber = userConfig.phone_number;
+                        console.log('📞 Using user phone number as outbound caller ID:', callerPhoneNumber);
+                    }
+                }
+            } catch (error) {
+                console.log('⚠️ Could not load user config for outbound caller ID, using fallback');
+            }
             
             // Add recording notification
             twiml.say('This call is being recorded for quality purposes.');
@@ -913,7 +1036,7 @@ app.post('/api/voice', (req, res) => {
             
             // Dial the phone number with recording enabled
             twiml.dial({
-                callerId: twilioConfig?.phone_number || '+1234567890',
+                callerId: callerPhoneNumber,
                 record: 'record-from-ringing',
                 recordingStatusCallback: `${req.protocol}://${req.get('host')}/api/recording-status`,
                 timeout: 30
@@ -1075,19 +1198,24 @@ app.all('/api/recording-status', async (req, res) => {
             console.log('✅ Recording metadata saved to Supabase:', RecordingSid);
             
             // Download recording and upload to Supabase Storage
-            if (twilioConfig && (twilioConfig.account_sid || process.env.TWILIO_ACCOUNT_SID)) {
+            if (userId) {
                 console.log('📥 Starting automatic download and upload to Supabase:', RecordingSid);
                 
-                const downloadResult = await downloadRecordingToSupabase(
-                    RecordingSid, 
-                    RecordingUrl, 
-                    {
-                        account_sid: twilioConfig?.account_sid || process.env.TWILIO_ACCOUNT_SID,
-                        auth_token: twilioConfig?.auth_token || process.env.TWILIO_AUTH_TOKEN
-                    },
-                    userId,
-                    CallSid
-                );
+                // Load user's Twilio config for downloading
+                const userTwilioConfig = await loadUserTwilioConfig(userId);
+                if (userTwilioConfig) {
+                    console.log('✅ Using user Twilio config for recording download');
+                    
+                    const downloadResult = await downloadRecordingToSupabase(
+                        RecordingSid, 
+                        RecordingUrl, 
+                        {
+                            account_sid: userTwilioConfig.account_sid,
+                            auth_token: userTwilioConfig.auth_token
+                        },
+                        userId,
+                        CallSid
+                    );
                 
                 // Update recording metadata with Supabase storage info
                 await updateRecordingWithSupabaseInfo(RecordingSid, {
@@ -1141,10 +1269,13 @@ app.all('/api/recording-status', async (req, res) => {
                     console.log('⚠️ Legacy database save failed (this is okay):', legacyError.message);
                 }
                 
-                console.log('✅ Recording processed and uploaded to Supabase:', downloadResult.fileName);
-                
+                    console.log('✅ Recording processed and uploaded to Supabase:', downloadResult.fileName);
+                    
+                } else {
+                    console.log('⚠️ User Twilio config not found, skipping automatic download');
+                }
             } else {
-                console.log('⚠️ Twilio config not available, skipping automatic download');
+                console.log('⚠️ User ID not available, skipping automatic download');
             }
             
         } catch (error) {
@@ -1246,58 +1377,15 @@ app.get('/api/recordings', async (req, res) => {
     }
 });
 
-// Manually sync recordings from Twilio API
+// Manually sync recordings from Twilio API - DISABLED (system-level fallback removed)
 app.post('/api/sync-recordings', async (req, res) => {
     try {
-        console.log('🔄 Syncing recordings from Twilio API...');
+        console.log('🚫 /api/sync-recordings endpoint disabled - use user-specific configurations');
         
-        if (!client) {
-            throw new Error('Twilio not configured');
-        }
-        
-        // Get recordings from Twilio API
-        const twilioRecordings = await client.recordings.list({ limit: 50 });
-        console.log(`📥 Found ${twilioRecordings.length} recordings in Twilio`);
-        
-        let syncedCount = 0;
-        let skippedCount = 0;
-        
-        for (const recording of twilioRecordings) {
-            try {
-                // Check if recording already exists in our database
-                const existingRecording = await db.getRecording(recording.sid);
-                
-                if (existingRecording) {
-                    skippedCount++;
-                    continue;
-                }
-                
-                // Save new recording to database
-                await db.saveRecording({
-                    recording_sid: recording.sid,
-                    call_sid: recording.callSid,
-                    recording_url: `https://api.twilio.com${recording.uri.replace('.json', '')}`,
-                    duration: recording.duration || 0,
-                    status: recording.status,
-                    channels: recording.channels || 1,
-                    source: 'TwilioAPI'
-                });
-                
-                syncedCount++;
-                console.log(`✅ Synced recording: ${recording.sid}`);
-                
-            } catch (error) {
-                console.error(`❌ Error syncing recording ${recording.sid}:`, error);
-            }
-        }
-        
-        console.log(`🎯 Sync complete: ${syncedCount} new, ${skippedCount} skipped`);
-        
-        res.json({ 
-            success: true, 
-            message: `Synced ${syncedCount} new recordings, skipped ${skippedCount} existing ones`,
-            synced: syncedCount,
-            skipped: skippedCount
+        res.status(410).json({
+            error: 'System-level Twilio operations disabled',
+            message: 'This endpoint has been disabled. Users must configure their own Twilio settings.',
+            redirectTo: '/settings'
         });
         
     } catch (error) {
@@ -1482,6 +1570,277 @@ app.get('/api/call-status/:callSid', async (req, res) => {
     }
 });
 
+// User Twilio Configuration API Endpoints
+
+// Get user's Twilio configuration
+app.get('/api/user/twilio-config', requireUserAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        console.log(`🔍 Getting Twilio config for user: ${userId}`);
+        
+        const config = await loadUserTwilioConfig(userId);
+        
+        if (config) {
+            // Don't send sensitive data to frontend
+            const safeConfig = {
+                id: config.id,
+                friendly_name: config.friendly_name,
+                account_sid: config.account_sid,
+                api_key: config.api_key,
+                phone_number: config.phone_number,
+                twiml_app_sid: config.twiml_app_sid,
+                webhook_url: config.webhook_url,
+                is_active: config.is_active,
+                updated_at: config.updated_at,
+                created_at: config.created_at
+            };
+            res.json(safeConfig);
+        } else {
+            res.status(404).json({ 
+                error: 'Configuration not found',
+                message: 'No Twilio configuration found for your account'
+            });
+        }
+    } catch (error) {
+        console.error('Error getting user Twilio config:', error);
+        res.status(500).json({ 
+            error: 'Failed to get configuration',
+            message: error.message
+        });
+    }
+});
+
+// Save user's Twilio configuration
+app.post('/api/user/twilio-config', requireUserAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        const config = req.body;
+        
+        console.log(`💾 Saving Twilio config for user: ${userId}`);
+        
+        // Validate required fields
+        const required = ['account_sid', 'auth_token', 'api_key', 'api_secret', 'phone_number', 'twiml_app_sid'];
+        const missing = required.filter(field => !config[field]);
+        
+        if (missing.length > 0) {
+            return res.status(400).json({ 
+                error: 'Missing required fields',
+                message: `The following fields are required: ${missing.join(', ')}`,
+                missingFields: missing
+            });
+        }
+
+        // Save to database with user ID
+        const savedConfig = await db.saveTwilioConfig(config, userId);
+        
+        console.log(`✅ Twilio configuration saved for user: ${userId}`);
+        
+        res.json({ 
+            success: true, 
+            message: 'Configuration saved successfully',
+            config: {
+                id: savedConfig.id,
+                friendly_name: savedConfig.friendly_name,
+                account_sid: savedConfig.account_sid,
+                phone_number: savedConfig.phone_number,
+                updated_at: savedConfig.updated_at
+            }
+        });
+        
+    } catch (error) {
+        console.error('Error saving user Twilio config:', error);
+        res.status(500).json({ 
+            error: 'Failed to save configuration',
+            message: error.message
+        });
+    }
+});
+
+// Test user's Twilio connection
+app.get('/api/user/test-twilio', requireUserAuth, async (req, res) => {
+    try {
+        const userId = req.user.id;
+        console.log(`🧪 Testing Twilio connection for user: ${userId}`);
+        
+        const userConfig = await loadUserTwilioConfig(userId);
+        
+        if (!userConfig) {
+            return res.status(404).json({
+                success: false,
+                error: 'Configuration not found',
+                message: 'Please configure your Twilio settings first'
+            });
+        }
+        
+        // Create user-specific client and test connection
+        const userClient = createUserTwilioClient(userConfig);
+        const account = await userClient.api.accounts(userConfig.account_sid).fetch();
+        
+        console.log(`✅ Twilio connection test successful for user: ${userId}`);
+        
+        res.json({
+            success: true,
+            message: 'Twilio connection successful!',
+            account: {
+                friendlyName: account.friendlyName,
+                sid: account.sid,
+                phoneNumber: userConfig.phone_number,
+                configName: userConfig.friendly_name || 'User Configuration'
+            }
+        });
+        
+    } catch (error) {
+        console.error(`❌ Twilio connection test failed for user:`, error);
+        res.status(500).json({
+            success: false,
+            error: 'Connection test failed',
+            message: error.message,
+            details: 'Please check your Twilio credentials'
+        });
+    }
+});
+
+// Transcribe recording endpoint (called from frontend webhook)
+app.post('/api/transcribe-recording', async (req, res) => {
+    try {
+        const { recordingSid, userId, callSid, storagePath } = req.body;
+        
+        console.log('🎤 Transcription request received:', {
+            recordingSid,
+            userId,
+            callSid,
+            storagePath
+        });
+        
+        // Validate required fields
+        if (!recordingSid || !userId) {
+            return res.status(400).json({ 
+                error: 'Missing required fields: recordingSid, userId' 
+            });
+        }
+        
+        // Check if recording already has transcription
+        const { data: existingRecording } = await supabaseClient
+            .from('recordings')
+            .select('transcription_text, transcription_status')
+            .eq('recording_sid', recordingSid)
+            .single();
+        
+        if (existingRecording?.transcription_text && existingRecording.transcription_status === 'completed') {
+            console.log('✅ Recording already has transcription, skipping');
+            return res.json({ 
+                success: true, 
+                message: 'Recording already transcribed',
+                status: 'already_completed'
+            });
+        }
+        
+        // Update status to processing
+        await supabaseClient
+            .from('recordings')
+            .update({ transcription_status: 'processing' })
+            .eq('recording_sid', recordingSid);
+        
+        // Download audio file from Supabase Storage
+        let audioBuffer;
+        if (storagePath) {
+            console.log('📥 Downloading audio from Supabase Storage:', storagePath);
+            
+            const { data: fileData, error: downloadError } = await supabaseClient.storage
+                .from('recordings')
+                .download(storagePath);
+            
+            if (downloadError) {
+                throw new Error(`Failed to download from storage: ${downloadError.message}`);
+            }
+            
+            audioBuffer = Buffer.from(await fileData.arrayBuffer());
+            console.log('✅ Audio downloaded from storage, size:', audioBuffer.length, 'bytes');
+        } else {
+            // Fallback: get recording URL and download from Twilio
+            const { data: recording } = await supabaseClient
+                .from('recordings')
+                .select('recording_url')
+                .eq('recording_sid', recordingSid)
+                .single();
+            
+            if (!recording?.recording_url) {
+                throw new Error('No recording URL or storage path available');
+            }
+            
+            // Load user's Twilio config for authentication
+            const userTwilioConfig = await loadUserTwilioConfig(userId);
+            if (!userTwilioConfig) {
+                throw new Error('User Twilio configuration not found');
+            }
+            
+            console.log('📥 Downloading audio from Twilio:', recording.recording_url);
+            const authString = Buffer.from(`${userTwilioConfig.account_sid}:${userTwilioConfig.auth_token}`).toString('base64');
+            
+            const response = await fetch(recording.recording_url, {
+                headers: { 'Authorization': `Basic ${authString}` }
+            });
+            
+            if (!response.ok) {
+                throw new Error(`Failed to download from Twilio: ${response.statusText}`);
+            }
+            
+            audioBuffer = Buffer.from(await response.arrayBuffer());
+            console.log('✅ Audio downloaded from Twilio, size:', audioBuffer.length, 'bytes');
+        }
+        
+        // Transcribe the audio (language auto-detection)
+        console.log('🎤 Starting transcription with language auto-detection...');
+        const transcriptionResult = await transcribeRecordingAudio(
+            recordingSid, 
+            audioBuffer, 
+            `${recordingSid}.wav`, 
+            userId
+        );
+        
+        if (transcriptionResult.success) {
+            console.log('✅ Transcription completed successfully');
+            console.log('🌍 Detected language:', transcriptionResult.language || 'auto');
+            res.json({ 
+                success: true, 
+                message: 'Transcription completed',
+                transcription: {
+                    text: transcriptionResult.text,
+                    language: transcriptionResult.language,
+                    duration: transcriptionResult.duration
+                }
+            });
+        } else {
+            console.error('❌ Transcription failed:', transcriptionResult.error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Transcription failed',
+                details: transcriptionResult.error
+            });
+        }
+        
+    } catch (error) {
+        console.error('❌ Error in transcribe-recording endpoint:', error);
+        
+        // Update status to failed
+        if (req.body.recordingSid) {
+            await supabaseClient
+                .from('recordings')
+                .update({ 
+                    transcription_status: 'failed',
+                    transcription_error: error.message
+                })
+                .eq('recording_sid', req.body.recordingSid);
+        }
+        
+        res.status(500).json({ 
+            success: false,
+            error: 'Internal server error',
+            details: error.message
+        });
+    }
+});
+
 // Admin middleware - check if user is authenticated
 function requireAuth(req, res, next) {
     if (req.session && req.session.adminId) {
@@ -1546,55 +1905,23 @@ app.get('/api/admin/check-auth', requireAuth, (req, res) => {
     });
 });
 
-// Get Twilio configuration
+// Get Twilio configuration - now disabled
 app.get('/api/admin/config', requireAuth, async (req, res) => {
-    try {
-        const config = await db.getTwilioConfig();
-        if (config) {
-            // Don't send sensitive data to frontend
-            const safeConfig = {
-                account_sid: config.account_sid,
-                api_key: config.api_key,
-                phone_number: config.phone_number,
-                twiml_app_sid: config.twiml_app_sid,
-                webhook_url: config.webhook_url,
-                updated_at: config.updated_at
-            };
-            res.json(safeConfig);
-        } else {
-            res.json(null);
-        }
-    } catch (error) {
-        console.error('Error getting config:', error);
-        res.status(500).json({ error: 'Failed to get configuration' });
-    }
+    res.status(410).json({ 
+        error: 'System-level Twilio configuration is no longer supported',
+        message: 'All users must configure their own Twilio accounts for security and cost control',
+        redirectTo: '/settings'
+    });
 });
 
-// Save Twilio configuration
+// System-level Twilio configuration disabled
+// Users must configure their own Twilio accounts
 app.post('/api/admin/config', requireAuth, async (req, res) => {
-    try {
-        const config = req.body;
-        
-        // Validate required fields
-        const required = ['account_sid', 'auth_token', 'api_key', 'api_secret', 'phone_number', 'twiml_app_sid'];
-        for (const field of required) {
-            if (!config[field]) {
-                return res.status(400).json({ error: `${field} is required` });
-            }
-        }
-
-        // Save to database
-        await db.saveTwilioConfig(config);
-        
-        // Reload configuration
-        await loadTwilioConfig();
-        
-        res.json({ success: true, message: 'Configuration saved successfully' });
-        
-    } catch (error) {
-        console.error('Error saving config:', error);
-        res.status(500).json({ error: 'Failed to save configuration' });
-    }
+    res.status(410).json({ 
+        error: 'System-level Twilio configuration is no longer supported',
+        message: 'All users must configure their own Twilio accounts for security and cost control',
+        redirectTo: '/settings'
+    });
 });
 
 // Change admin password
@@ -1627,17 +1954,13 @@ app.post('/api/admin/change-password', requireAuth, async (req, res) => {
     }
 });
 
-// Test connection (admin version with more details)
+// Test connection - now disabled (admin version)
 app.get('/api/admin/test-connection', requireAuth, async (req, res) => {
-    try {
-        const result = await testTwilioConnection();
-        res.json(result);
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
+    res.status(410).json({ 
+        error: 'System-level Twilio testing is no longer supported',
+        message: 'Users must test their own Twilio configurations',
+        redirectTo: '/settings'
+    });
 });
 
 // Initialize and start server
@@ -1646,16 +1969,19 @@ async function startServer() {
         // Initialize database
         await db.init();
         
-        // Load Twilio configuration
-        await loadTwilioConfig();
+        // Initialize Supabase client for user authentication
+        await initializeSupabaseClient();
         
         // Start server
         app.listen(PORT, () => {
             console.log(`🚀 Server running on port ${PORT}`);
             console.log(`📱 Dialer: http://localhost:${PORT}`);
             console.log(`⚙️  Admin: http://localhost:${PORT}/admin`);
-            console.log('🔗 Testing Twilio connection...');
-            testTwilioConnection();
+            console.log('');
+            console.log('✅ Backend is now configured for user-specific Twilio configurations!');
+            console.log('📋 Users need to configure their Twilio settings in the Settings page');
+            console.log('🔐 All API calls now require user authentication');
+            console.log('🚫 System-level Twilio fallback disabled for security and cost control');
         });
         
     } catch (error) {
