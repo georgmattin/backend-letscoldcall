@@ -114,50 +114,55 @@ if (!fs.existsSync(recordingsDir)) {
     console.log('📁 Created recordings directory:', recordingsDir);
 }
 
-// Create WebSocket server for Twilio Media Streams
-const wss = new WebSocket.Server({ port: 3003 });
-console.log('🎵 WebSocket server started on port 3003 for Twilio Media Streams');
+// Create WebSocket server for Twilio Media Streams only if explicitly configured
+const WEBSOCKET_URL = process.env.WEBSOCKET_URL;
+if (WEBSOCKET_URL) {
+    const wss = new WebSocket.Server({ port: 3003 });
+    console.log('🎵 WebSocket server started on port 3003 for Twilio Media Streams');
 
-// Handle WebSocket connections for audio streaming
-wss.on('connection', (ws) => {
-    console.log('🎵 New WebSocket connection for audio streaming');
-    
-    ws.on('message', (message) => {
-        try {
-            const data = JSON.parse(message);
-            
-            if (data.event === 'connected') {
-                console.log('🎵 Media Stream connected:', data);
-            } else if (data.event === 'start') {
-                console.log('🎵 Media Stream started:', data);
-                // Store stream info for this connection
-                ws.callSid = data.start.callSid;
-                ws.streamSid = data.start.streamSid;
-            } else if (data.event === 'media') {
-                // This is real-time audio data!
-                const audioPayload = data.media.payload;
-                const audioBuffer = Buffer.from(audioPayload, 'base64');
+    // Handle WebSocket connections for audio streaming
+    wss.on('connection', (ws) => {
+        console.log('🎵 New WebSocket connection for audio streaming');
+        
+        ws.on('message', (message) => {
+            try {
+                const data = JSON.parse(message);
                 
-                // Send to real-time AI analysis
-                processRealtimeAudio(audioBuffer, ws.callSid, data.media.timestamp)
-                    .catch(error => console.error('🎵 Real-time AI processing error:', error));
-                
-            } else if (data.event === 'stop') {
-                console.log('🎵 Media Stream stopped:', data);
+                if (data.event === 'connected') {
+                    console.log('🎵 Media Stream connected:', data);
+                } else if (data.event === 'start') {
+                    console.log('🎵 Media Stream started:', data);
+                    // Store stream info for this connection
+                    ws.callSid = data.start.callSid;
+                    ws.streamSid = data.start.streamSid;
+                } else if (data.event === 'media') {
+                    // This is real-time audio data!
+                    const audioPayload = data.media.payload;
+                    const audioBuffer = Buffer.from(audioPayload, 'base64');
+                    
+                    // Send to real-time AI analysis
+                    processRealtimeAudio(audioBuffer, ws.callSid, data.media.timestamp)
+                        .catch(error => console.error('🎵 Real-time AI processing error:', error));
+                    
+                } else if (data.event === 'stop') {
+                    console.log('🎵 Media Stream stopped:', data);
+                }
+            } catch (error) {
+                console.error('🎵 Error processing audio stream message:', error);
             }
-        } catch (error) {
-            console.error('🎵 Error processing audio stream message:', error);
-        }
+        });
+        
+        ws.on('close', () => {
+            console.log('🎵 WebSocket connection closed');
+        });
+        
+        ws.on('error', (error) => {
+            console.error('🎵 WebSocket error:', error);
+        });
     });
-    
-    ws.on('close', () => {
-        console.log('🎵 WebSocket connection closed');
-    });
-    
-    ws.on('error', (error) => {
-        console.error('🎵 WebSocket error:', error);
-    });
-});
+} else {
+    console.log('🎵 Skipping WebSocket server startup - WEBSOCKET_URL not set');
+}
 
 // Real-time audio processing function
 async function processRealtimeAudio(audioBuffer, callSid, timestamp) {
@@ -438,6 +443,46 @@ app.use(session({
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
 }));
+
+// API Secret enforcement for protected API endpoints
+const openApiPaths = new Set([
+    '/api/voice',              // Twilio webhook
+    '/api/recording-status'    // Twilio recording status webhook
+]);
+
+app.use((req, res, next) => {
+    try {
+        // Only apply to /api routes
+        if (!req.path.startsWith('/api')) return next();
+
+        // Always allow preflight to pass to CORS middleware
+        if (req.method === 'OPTIONS') return next();
+
+        // Allow open webhook paths
+        if (openApiPaths.has(req.path)) return next();
+
+        // Enforce x-api-secret if configured
+        const configuredSecret = process.env.API_SECRET;
+        if (!configuredSecret) {
+            // In development, allow missing secret but warn
+            if (process.env.NODE_ENV !== 'production') {
+                console.warn('API_SECRET is not set; skipping API secret check (development mode).');
+                return next();
+            }
+            // In production without API_SECRET, block by default
+            return res.status(500).json({ error: 'Server misconfiguration: API_SECRET not set' });
+        }
+
+        const provided = req.headers['x-api-secret'];
+        if (provided !== configuredSecret) {
+            return res.status(403).json({ error: 'Invalid API secret' });
+        }
+        return next();
+    } catch (err) {
+        console.error('Error in API secret middleware:', err);
+        return res.status(500).json({ error: 'Internal server error' });
+    }
+});
 
 // System no longer uses fallback Twilio configuration
 // All Twilio operations now require user-specific configurations
@@ -891,25 +936,58 @@ app.post('/api/voice', async (req, res) => {
     if (isIncomingCall && !isFromBrowserClient) {
         console.log('📞 🔔 INCOMING CALL detected from external caller:', caller);
         
-        // Add Media Stream for real-time AI analysis of incoming calls
-        const streamUrl = process.env.WEBSOCKET_URL || `wss://${req.get('host').replace(':3002', ':3003')}`;
-        twiml.start().stream({
-            url: `${streamUrl}/audio-stream`,
-            track: 'both_tracks' // Capture both caller and called party audio
-        });
-        
+        // Build callback URL using forwarded headers (for Railway/Vercel proxy)
+        const host = req.get('x-forwarded-host') || req.get('host');
+        const proto = req.get('x-forwarded-proto') || 'https';
+        const callbackUrl = `${proto}://${host}/api/recording-status`;
+
+        // Optional: Media Stream only when WEBSOCKET_URL is configured
+        if (process.env.WEBSOCKET_URL) {
+            const streamUrl = process.env.WEBSOCKET_URL;
+            twiml.start().stream({
+                url: `${streamUrl}/audio-stream`,
+                track: 'both_tracks'
+            });
+        }
+
         // For incoming calls, dial to the client (browser) using TwiML App
         const dial = twiml.dial({
             callerId: caller, // Show the original caller's number
             timeout: 30,
             record: 'record-from-ringing',
-            recordingStatusCallback: `${req.protocol}://${req.get('host')}/api/recording-status`
+            recordingStatusCallback: callbackUrl
         });
         
-        // Dial to the client (this will ring in the browser)
-        // TODO: make this dynamic by mapping calledNumber -> owner user identity.
-        // For now, route to the current user's identity so inbound rings the web client.
-        dial.client('user_92194486-0de3-4dfc-a08f-05c95564d3e8');
+        // Resolve which user owns the called Twilio number and route to that user's client
+        try {
+            const supabase = require('./utils/supabase-server').createSupabaseClient();
+            if (supabase && calledNumber) {
+                const { data, error } = await supabase
+                    .from('user_twilio_configs')
+                    .select('user_id')
+                    .eq('phone_number', calledNumber)
+                    .eq('is_active', true)
+                    .order('updated_at', { ascending: false })
+                    .limit(1);
+                if (!error && data && data.length > 0 && data[0].user_id) {
+                    const ownerUserId = data[0].user_id;
+                    console.log('📞 Routing inbound call to user client identity:', `user_${ownerUserId}`);
+                    dial.client(`user_${ownerUserId}`);
+                } else {
+                    console.log('⚠️ No active owner found for called number, playing message');
+                    twiml.say('No client is configured for this phone number.');
+                    twiml.hangup();
+                }
+            } else {
+                console.log('⚠️ Supabase client not available or calledNumber missing');
+                twiml.say('Configuration error.');
+                twiml.hangup();
+            }
+        } catch (e) {
+            console.log('❌ Error resolving inbound client identity:', e.message);
+            twiml.say('Internal error.');
+            twiml.hangup();
+        }
         
         console.log('📞 ➡️ Forwarding incoming call to browser client');
     } else if (isIncomingCall && isFromBrowserClient) {
@@ -991,18 +1069,25 @@ app.post('/api/voice', async (req, res) => {
             // Add recording notification
             twiml.say('This call is being recorded for quality purposes.');
             
-            // Add Media Stream for real-time AI analysis
-            const streamUrl = process.env.WEBSOCKET_URL || `wss://${req.get('host').replace(':3002', ':3003')}`;
-            twiml.start().stream({
-                url: `${streamUrl}/audio-stream`,
-                track: 'both_tracks' // Capture both caller and called party audio
-            });
+            // Build callback URL using forwarded headers (for Railway/Vercel proxy)
+            const host = req.get('x-forwarded-host') || req.get('host');
+            const proto = req.get('x-forwarded-proto') || 'https';
+            const callbackUrl = `${proto}://${host}/api/recording-status`;
+
+            // Optional: Media Stream only when WEBSOCKET_URL is configured
+            if (process.env.WEBSOCKET_URL) {
+                const streamUrl = process.env.WEBSOCKET_URL;
+                twiml.start().stream({
+                    url: `${streamUrl}/audio-stream`,
+                    track: 'both_tracks'
+                });
+            }
             
             // Dial the phone number with recording enabled
             twiml.dial({
                 callerId: callerPhoneNumber,
                 record: 'record-from-ringing',
-                recordingStatusCallback: `${req.protocol}://${req.get('host')}/api/recording-status`,
+                recordingStatusCallback: callbackUrl,
                 timeout: 30
             }, finalPhoneNumber);
         } else {
@@ -1084,18 +1169,25 @@ app.post('/api/voice', async (req, res) => {
             // Add recording notification
             twiml.say('This call is being recorded for quality purposes.');
             
-            // Add Media Stream for real-time AI analysis
-            const streamUrl = process.env.WEBSOCKET_URL || `wss://${req.get('host').replace(':3002', ':3003')}`;
-            twiml.start().stream({
-                url: `${streamUrl}/audio-stream`,
-                track: 'both_tracks' // Capture both caller and called party audio
-            });
+            // Build callback URL using forwarded headers (for Railway/Vercel proxy)
+            const host = req.get('x-forwarded-host') || req.get('host');
+            const proto = req.get('x-forwarded-proto') || 'https';
+            const callbackUrl = `${proto}://${host}/api/recording-status`;
+
+            // Optional: Media Stream only when WEBSOCKET_URL is configured
+            if (process.env.WEBSOCKET_URL) {
+                const streamUrl = process.env.WEBSOCKET_URL;
+                twiml.start().stream({
+                    url: `${streamUrl}/audio-stream`,
+                    track: 'both_tracks'
+                });
+            }
             
             // Dial the phone number with recording enabled
             twiml.dial({
                 callerId: callerPhoneNumber,
                 record: 'record-from-ringing',
-                recordingStatusCallback: `${req.protocol}://${req.get('host')}/api/recording-status`,
+                recordingStatusCallback: callbackUrl,
                 timeout: 30
             }, phoneNumber);
         } else {
