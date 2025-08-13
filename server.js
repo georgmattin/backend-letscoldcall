@@ -366,18 +366,75 @@ async function downloadRecordingLocally(recordingSid, recordingUrl, twilioConfig
 }
 
 // Middleware
-app.use(cors());
+// Configure CORS with allowlist and credentials
+const defaultAllowedOrigins = [
+    'http://localhost:3000',
+    'http://127.0.0.1:3000',
+    'http://localhost:3001',
+    'http://127.0.0.1:3001'
+];
+const envAllowed = (process.env.CORS_ORIGINS || '')
+    .split(',')
+    .map(s => s.trim())
+    .filter(Boolean);
+const allowedOrigins = [...new Set([...defaultAllowedOrigins, ...envAllowed])];
+
+const corsOptions = {
+    origin: (origin, callback) => {
+        // Allow non-browser clients (no origin)
+        if (!origin) return callback(null, true);
+
+        // Allow explicit origins
+        if (allowedOrigins.includes(origin)) return callback(null, true);
+
+        // Allow ngrok/localtunnel style hosts in dev
+        const devDynamicHosts = [/\.ngrok(-free)?\.app$/i, /\.loca\.lt$/i];
+        if (devDynamicHosts.some(r => r.test(new URL(origin).hostname))) {
+            return callback(null, true);
+        }
+
+        console.warn(`CORS blocked origin: ${origin}`);
+        return callback(new Error('Not allowed by CORS'));
+    },
+    credentials: true,
+    methods: ['GET', 'HEAD', 'PUT', 'PATCH', 'POST', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With']
+};
+
+app.use(cors(corsOptions));
+// Handle preflight for all routes
+app.options('*', cors(corsOptions));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true })); // This is crucial for Twilio webhooks!
 app.use(express.static('public')); // Serve static files from public directory
 
+// Trust proxy so secure cookies work behind reverse proxies (e.g., Vercel/NGINX)
+app.set('trust proxy', 1);
+
+// Prepare session secret with environment enforcement
+let sessionSecret = process.env.SESSION_SECRET;
+if (!sessionSecret) {
+    if (process.env.NODE_ENV === 'production') {
+        console.error('SESSION_SECRET is required in production. Set it in the environment.');
+        throw new Error('Missing SESSION_SECRET');
+    } else {
+        sessionSecret = 'dev-insecure-session-secret';
+        console.warn('Using insecure development session secret. Set SESSION_SECRET for better security.');
+    }
+}
+
 // Session middleware for admin authentication
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key-change-this',
+    secret: sessionSecret,
     resave: false,
     saveUninitialized: false,
-    cookie: { 
-        secure: false, // Set to true if using HTTPS
+    cookie: {
+        // Use secure cookies in production
+        secure: process.env.NODE_ENV === 'production',
+        // If front-end is on a different domain and you need cross-site cookies, consider:
+        // sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000 // 24 hours
     }
 }));
