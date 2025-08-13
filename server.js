@@ -972,19 +972,35 @@ app.post('/api/voice', async (req, res) => {
         try {
             const supabase = require('./utils/supabase-server').createSupabaseClient();
             if (supabase && calledNumber) {
+                // Normalize phone numbers to improve matching (handles E.164 vs stored formats)
+                const calledNorm = String(calledNumber).replace(/[^\d]/g, '');
+                const last10 = calledNorm.slice(-10);
+                console.log('📞 Inbound mapping - calledNumber:', calledNumber, 'normalized:', calledNorm, 'last10:', last10);
+
+                // Try multiple match strategies: exact, normalized exact, or last-10-digits
                 const { data, error } = await supabase
                     .from('user_twilio_configs')
-                    .select('user_id')
-                    .eq('phone_number', calledNumber)
+                    .select('user_id, phone_number, updated_at')
                     .eq('is_active', true)
+                    .or(
+                        [
+                            `phone_number.eq.${calledNumber}`,
+                            `phone_number.eq.${calledNorm}`,
+                            `phone_number.ilike.%${last10}`
+                        ].join(',')
+                    )
                     .order('updated_at', { ascending: false })
-                    .limit(1);
+                    .limit(5);
                 if (!error && data && data.length > 0 && data[0].user_id) {
-                    const ownerUserId = data[0].user_id;
-                    console.log('📞 Routing inbound call to user client identity:', `user_${ownerUserId}`);
+                    // Pick the best match: prefer exact match on full number
+                    let owner = data.find(r => r.phone_number === calledNumber) ||
+                                data.find(r => r.phone_number === calledNorm) ||
+                                data[0];
+                    const ownerUserId = owner.user_id;
+                    console.log('📞 Routing inbound call to user client identity:', `user_${ownerUserId}`, 'matched phone_number:', owner.phone_number);
                     dial.client(`user_${ownerUserId}`);
                 } else {
-                    console.log('⚠️ No active owner found for called number, playing message');
+                    console.log('⚠️ No active owner found for called number with any strategy, playing message');
                     twiml.say('No client is configured for this phone number.');
                     twiml.hangup();
                 }
