@@ -555,6 +555,11 @@ app.get('/', (req, res) => {
     res.redirect('/index.html'); // Redirect to dialer interface
 });
 
+// Simple health check for Railway
+app.get('/health', (req, res) => {
+    res.status(200).json({ status: 'ok' });
+});
+
 app.get('/api', (req, res) => {
     res.json({
         message: 'Let\'s Cold Call Backend API',
@@ -875,13 +880,18 @@ app.post('/api/make-call', requireUserAuth, async (req, res) => {
         const userClient = createUserTwilioClient(userTwilioConfig);
 
         // Make call directly using user's Twilio API with recording enabled
+        // Build callback URL using forwarded headers (handles Railway/Vercel proxies)
+        const host = req.get('x-forwarded-host') || req.get('host');
+        const proto = req.get('x-forwarded-proto') || 'https';
+        const callbackUrl = `${proto}://${host}/api/recording-status`;
+
         const call = await userClient.calls.create({
             to: phoneNumber,
             from: userTwilioConfig.phone_number,
             // TwiML with recording enabled for both parties
             twiml: `<Response>
                         <Say voice="alice" language="en-US">Hello! This call is being recorded for quality purposes.</Say>
-                        <Dial record="record-from-ringing" recordingStatusCallback="${req.protocol}://${req.get('host')}/api/recording-status">
+                        <Dial record="record-from-ringing" recordingStatusCallback="${callbackUrl}">
                             ${phoneNumber}
                         </Dial>
                     </Response>`
